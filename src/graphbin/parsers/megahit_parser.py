@@ -37,12 +37,22 @@ def get_initial_binning_result(
     logger.info("Obtaining the initial binning result")
 
     bins = [[] for x in range(n_bins)]
+    n_skipped = 0
 
     try:
         with open(contig_bins_file) as contig_bins:
             readCSV = csv.reader(contig_bins, delimiter=delimiter)
             for row in readCSV:
-                contig_num = contigs_map_rev[int(graph_to_contig_map_rev[row[0]])]
+                # Extract short contig name (strip FASTA description fields)
+                contig_name = row[0].split()[0]
+
+                if contig_name not in graph_to_contig_map_rev:
+                    n_skipped += 1
+                    continue
+
+                contig_num = contigs_map_rev[
+                    int(graph_to_contig_map_rev[contig_name])
+                ]
 
                 bin_num = bins_list.index(row[1])
                 bins[bin_num].append(contig_num)
@@ -54,6 +64,11 @@ def get_initial_binning_result(
         )
         logger.info("Exiting GraphBin... Bye...!")
         sys.exit(1)
+
+    if n_skipped > 0:
+        logger.warning(
+            f"{n_skipped} contigs in the binning result were not found in the assembly graph and were skipped."
+        )
 
     return bins
 
@@ -157,11 +172,26 @@ def parse_graph(assembly_graph_file, original_contigs):
 
     graph_to_contig_map = BidirectionalMap()
 
-    seq_to_original = {m2: n2 for n2, m2 in original_contigs.items()}
+    # Try matching by sequence content
+    seq_to_original = {seq: name for name, seq in original_contigs.items()}
 
     for n, m in graph_contigs.items():
         if m in seq_to_original:
             graph_to_contig_map[n] = seq_to_original[m]
+
+    # Fall back to positional matching if sequence matching produced poor results
+    if len(graph_to_contig_map) < len(graph_contigs) * 0.5:
+        logger.warning(
+            f"Sequence matching mapped only {len(graph_to_contig_map)}/{len(graph_contigs)} contigs. "
+            f"Falling back to positional matching."
+        )
+        graph_to_contig_map = BidirectionalMap()
+        original_keys = list(original_contigs.keys())
+        for i, n in enumerate(graph_contigs):
+            if i < len(original_keys):
+                graph_to_contig_map[n] = original_keys[i]
+
+    logger.info(f"Mapped {len(graph_to_contig_map)}/{len(graph_contigs)} contigs to original IDs")
 
     return assembly_graph, graph_to_contig_map, contigs_map, node_count
 

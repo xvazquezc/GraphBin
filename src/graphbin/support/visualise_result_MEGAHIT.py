@@ -286,11 +286,26 @@ try:
 
     graph_to_contig_map = BidirectionalMap()
 
-    seq_to_original = {m2: n2 for n2, m2 in original_contigs.items()}
+    # Try matching by sequence content
+    seq_to_original = {seq: name for name, seq in original_contigs.items()}
 
     for n, m in graph_contigs.items():
         if m in seq_to_original:
             graph_to_contig_map[n] = seq_to_original[m]
+
+    # Fall back to positional matching if sequence matching produced poor results
+    if len(graph_to_contig_map) < len(graph_contigs) * 0.5:
+        print(
+            f"\nWarning: Sequence matching mapped only {len(graph_to_contig_map)}/{len(graph_contigs)} contigs. "
+            f"Falling back to positional matching."
+        )
+        graph_to_contig_map = BidirectionalMap()
+        original_keys = list(original_contigs.keys())
+        for i, n in enumerate(graph_contigs):
+            if i < len(original_keys):
+                graph_to_contig_map[n] = original_keys[i]
+
+    print(f"\nMapped {len(graph_to_contig_map)}/{len(graph_contigs)} contigs to original IDs")
 
     graph_to_contig_map_rev = graph_to_contig_map.inverse
 
