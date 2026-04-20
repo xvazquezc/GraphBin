@@ -42,10 +42,11 @@ def run(args):
     logger = logging.getLogger("GraphBin %s" % __version__)
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    consoleHeader = logging.StreamHandler()
-    consoleHeader.setFormatter(formatter)
-    consoleHeader.setLevel(logging.INFO)
-    logger.addHandler(consoleHeader)
+    if not logger.handlers:
+        consoleHeader = logging.StreamHandler()
+        consoleHeader.setFormatter(formatter)
+        consoleHeader.setLevel(logging.INFO)
+        logger.addHandler(consoleHeader)
 
     start_time = time.time()
 
@@ -61,10 +62,11 @@ def run(args):
     # Setup output path for log file
     # ---------------------------------------------------
 
-    fileHandler = logging.FileHandler(output_path + "/" + prefix + "graphbin.log")
-    fileHandler.setLevel(logging.DEBUG)
-    fileHandler.setFormatter(formatter)
-    logger.addHandler(fileHandler)
+    if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+        fileHandler = logging.FileHandler(output_path + "/" + prefix + "graphbin.log")
+        fileHandler.setLevel(logging.DEBUG)
+        fileHandler.setFormatter(formatter)
+        logger.addHandler(fileHandler)
 
     logger.info(
         "Welcome to GraphBin: Refined Binning of Metagenomic Contigs using Assembly Graphs."
