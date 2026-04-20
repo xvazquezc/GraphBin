@@ -157,9 +157,11 @@ def parse_graph(assembly_graph_file, original_contigs):
 
     graph_to_contig_map = BidirectionalMap()
 
-    for (n, m), (n2, m2) in zip(graph_contigs.items(), original_contigs.items()):
-        if m == m2:
-            graph_to_contig_map[n] = n2
+    seq_to_original = {m2: n2 for n2, m2 in original_contigs.items()}
+
+    for n, m in graph_contigs.items():
+        if m in seq_to_original:
+            graph_to_contig_map[n] = seq_to_original[m]
 
     return assembly_graph, graph_to_contig_map, contigs_map, node_count
 
