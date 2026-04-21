@@ -1,8 +1,12 @@
+import csv
 import subprocess
 
 from pathlib import Path
 
 import pytest
+
+from graphbin.bidirectionalmap.bidirectionalmap import BidirectionalMap
+from graphbin.parsers.megahit_parser import write_output
 
 
 __author__ = "Vijini Mallawaarachchi"
@@ -84,6 +88,48 @@ def test_graphbin_on_megahit_dataset(tmp_dir):
     binned = dir_name / "initial_binning_res.csv"
     cmd = f"graphbin --assembler megahit --graph {graph} --contigs {contigs} --binned {binned} --output {tmp_dir}"
     exec_command(cmd)
+
+
+def test_megahit_write_output_skips_unmapped_contigs(tmp_dir):
+    """MEGAHIT output writer should not crash when some contigs are unmapped."""
+    contigs_file = tmp_dir / "contigs.fasta"
+    contigs_file.write_text(
+        ">c0\nAAAA\n>c1\nCCCC\n>c2\nGGGG\n",
+        encoding="utf-8",
+    )
+
+    graph_to_contig_map = BidirectionalMap()
+    graph_to_contig_map[100] = "c0"
+    graph_to_contig_map[101] = "c1"
+    # Intentionally do not map graph contig id 102.
+
+    contigs_map = BidirectionalMap()
+    contigs_map[0] = 100
+    contigs_map[1] = 101
+    contigs_map[2] = 102
+
+    write_output(
+        output_path=f"{tmp_dir}/",
+        prefix="",
+        final_bins={0: "1", 1: "1", 2: "2"},
+        contigs_file=contigs_file,
+        graph_to_contig_map=graph_to_contig_map,
+        bins=[[0, 1, 2]],
+        contigs_map=contigs_map,
+        bins_list=["1"],
+        delimiter=",",
+        node_count=3,
+        remove_labels={2},
+        non_isolated={0, 1},
+    )
+
+    output_file = tmp_dir / "graphbin_output.csv"
+    assert output_file.exists()
+
+    with output_file.open(encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    assert rows == [["c0", "1"], ["c1", "1"]]
 
 
 def test_graphbin_on_flye_dataset(tmp_dir):

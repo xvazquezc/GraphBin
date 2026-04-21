@@ -172,12 +172,15 @@ def parse_graph(assembly_graph_file, original_contigs):
 
     graph_to_contig_map = BidirectionalMap()
 
-    # Try matching by sequence content
-    seq_to_original = {seq: name for name, seq in original_contigs.items()}
+    # Try matching by sequence content. Keep support for duplicate sequences by
+    # storing all original IDs per sequence and consuming them one-by-one.
+    seq_to_original = {}
+    for name, seq in original_contigs.items():
+        seq_to_original.setdefault(seq, []).append(name)
 
     for n, m in graph_contigs.items():
-        if m in seq_to_original:
-            graph_to_contig_map[n] = seq_to_original[m]
+        if m in seq_to_original and seq_to_original[m]:
+            graph_to_contig_map[n] = seq_to_original[m].pop()
 
     # Fall back to positional matching if sequence matching produced poor results
     if len(graph_to_contig_map) < len(graph_contigs) * 0.5:
@@ -229,10 +232,24 @@ def write_output(
             output_bins_path + prefix + "bin_" + bin_name + ".fasta", "w+"
         )
 
+    n_missing_fasta = 0
+    n_missing_output = 0
+    n_missing_unbinned = 0
+
     for label, seq in MinimalFastaParser(
         contigs_file, label_to_name=lambda x: x.split()[0]
     ):
-        contig_num = contigs_map_rev[graph_to_contig_map_rev[label]]
+        if label not in graph_to_contig_map_rev:
+            n_missing_fasta += 1
+            continue
+
+        graph_contig_id = graph_to_contig_map_rev[label]
+
+        if graph_contig_id not in contigs_map_rev:
+            n_missing_fasta += 1
+            continue
+
+        contig_num = contigs_map_rev[graph_contig_id]
 
         if contig_num in final_bins:
             bin_files[final_bins[contig_num]].write(f">{label}\n{seq}\n")
@@ -243,8 +260,18 @@ def write_output(
 
     for b in range(len(bins)):
         for contig in bins[b]:
+            if contig not in contigs_map:
+                n_missing_output += 1
+                continue
+
+            graph_contig_id = contigs_map[contig]
+
+            if graph_contig_id not in graph_to_contig_map:
+                n_missing_output += 1
+                continue
+
             line = []
-            line.append(graph_to_contig_map[contigs_map[contig]])
+            line.append(graph_to_contig_map[graph_contig_id])
             line.append(bins_list[b])
             output_bins.append(line)
 
@@ -261,9 +288,34 @@ def write_output(
 
     for i in range(node_count):
         if i in remove_labels or i not in non_isolated:
+            if i not in contigs_map:
+                n_missing_unbinned += 1
+                continue
+
+            graph_contig_id = contigs_map[i]
+
+            if graph_contig_id not in graph_to_contig_map:
+                n_missing_unbinned += 1
+                continue
+
             line = []
-            line.append(graph_to_contig_map[contigs_map[i]])
+            line.append(graph_to_contig_map[graph_contig_id])
             unbinned_contigs.append(line)
+
+    if n_missing_fasta > 0:
+        logger.warning(
+            f"Skipped {n_missing_fasta} contigs while writing FASTA bins because they could not be mapped to original IDs."
+        )
+
+    if n_missing_output > 0:
+        logger.warning(
+            f"Skipped {n_missing_output} contigs while writing graphbin_output.csv because they could not be mapped to original IDs."
+        )
+
+    if n_missing_unbinned > 0:
+        logger.warning(
+            f"Skipped {n_missing_unbinned} contigs while writing graphbin_unbinned.csv because they could not be mapped to original IDs."
+        )
 
     if len(unbinned_contigs) != 0:
         unbinned_file = output_path + prefix + "graphbin_unbinned.csv"

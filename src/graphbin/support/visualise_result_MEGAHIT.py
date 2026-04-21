@@ -286,12 +286,15 @@ try:
 
     graph_to_contig_map = BidirectionalMap()
 
-    # Try matching by sequence content
-    seq_to_original = {seq: name for name, seq in original_contigs.items()}
+    # Try matching by sequence content. Keep support for duplicate sequences by
+    # storing all original IDs per sequence and consuming them one-by-one.
+    seq_to_original = {}
+    for name, seq in original_contigs.items():
+        seq_to_original.setdefault(seq, []).append(name)
 
     for n, m in graph_contigs.items():
-        if m in seq_to_original:
-            graph_to_contig_map[n] = seq_to_original[m]
+        if m in seq_to_original and seq_to_original[m]:
+            graph_to_contig_map[n] = seq_to_original[m].pop()
 
     # Fall back to positional matching if sequence matching produced poor results
     if len(graph_to_contig_map) < len(graph_contigs) * 0.5:
@@ -321,7 +324,11 @@ try:
     for i in range(node_count):
         assembly_graph.vs[i]["id"] = i
         assembly_graph.vs[i]["label"] = str(contigs_map[i])
-        assembly_graph.vs[i]["name"] = graph_to_contig_map[contigs_map[i]]
+        graph_contig_id = contigs_map[i]
+        if graph_contig_id in graph_to_contig_map:
+            assembly_graph.vs[i]["name"] = graph_to_contig_map[graph_contig_id]
+        else:
+            assembly_graph.vs[i]["name"] = str(graph_contig_id)
 
     # Iterate links
     for link in links:
@@ -353,7 +360,10 @@ try:
     with open(initial_binning_result) as contig_bins:
         readCSV = csv.reader(contig_bins, delimiter=",")
         for row in readCSV:
-            contig_num = contigs_map_rev[int(graph_to_contig_map_rev[row[0]])]
+            contig_name = row[0].split()[0]
+            if contig_name not in graph_to_contig_map_rev:
+                continue
+            contig_num = contigs_map_rev[int(graph_to_contig_map_rev[contig_name])]
             bin_num = bins_list.index(row[1])
             bins[bin_num].append(contig_num)
 
@@ -436,6 +446,10 @@ initial_out_fig_name = output_path + prefix + "initial_binning_result." + image_
 node_colours = []
 
 for i in assembly_graph.vs()["name"]:
+    if i not in graph_to_contig_map_rev:
+        node_colours.append("grey")
+        continue
+
     contig_num = contigs_map_rev[int(graph_to_contig_map_rev[i])]
     no_bin = True
     for j in range(n_bins):
@@ -482,7 +496,10 @@ try:
     with open(final_binning_result) as contig_bins:
         readCSV = csv.reader(contig_bins, delimiter=",")
         for row in readCSV:
-            contig_num = contigs_map_rev[int(graph_to_contig_map_rev[row[0]])]
+            contig_name = row[0].split()[0]
+            if contig_name not in graph_to_contig_map_rev:
+                continue
+            contig_num = contigs_map_rev[int(graph_to_contig_map_rev[contig_name])]
             bin_num = bins_list.index(row[1])
             bins[bin_num].append(contig_num)
 
@@ -508,6 +525,10 @@ final_out_fig_name = (
 node_colours = []
 
 for i in assembly_graph.vs()["name"]:
+    if i not in graph_to_contig_map_rev:
+        node_colours.append("grey")
+        continue
+
     contig_num = contigs_map_rev[int(graph_to_contig_map_rev[i])]
     no_bin = True
     for j in range(n_bins):
