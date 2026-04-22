@@ -3,6 +3,8 @@
 import logging
 import sys
 
+from collections import deque
+
 from graphbin.labelpropagation.labelprop import LabelProp
 
 
@@ -24,14 +26,14 @@ def getClosestLabelledVertices(graph, node, binned_contigs):
     # Remove labels of ambiguous vertices
     # -------------------------------------
 
-    queu_l = [graph.neighbors(node, mode="ALL")]
-    visited_l = [node]
+    queu_l = deque([graph.neighbors(node, mode="ALL")])
+    visited_l = {node}
     labelled = []
 
-    while len(queu_l) > 0:
-        active_level = queu_l.pop(0)
+    while queu_l:
+        active_level = queu_l.popleft()
         is_finish = False
-        visited_l += active_level
+        visited_l.update(active_level)
 
         for n in active_level:
             if n in binned_contigs:
@@ -40,16 +42,11 @@ def getClosestLabelledVertices(graph, node, binned_contigs):
         if is_finish:
             return labelled
         else:
-            temp = []
+            temp = set()
             for n in active_level:
-                temp += graph.neighbors(n, mode="ALL")
-                temp = list(set(temp))
-            temp2 = []
-
-            for n in temp:
-                if n not in visited_l:
-                    temp2.append(n)
-            if len(temp2) > 0:
+                temp.update(graph.neighbors(n, mode="ALL"))
+            temp2 = [n for n in temp if n not in visited_l]
+            if temp2:
                 queu_l.append(temp2)
     return labelled
 
@@ -58,6 +55,9 @@ def graphbin_main(
     n_bins, bins, bins_list, assembly_graph, node_count, diff_threshold, max_iteration
 ):
     logger.info("Determining ambiguous vertices")
+
+    # Build reverse map from contig to its bin for O(1) lookups
+    contig_bin_map = {contig: b for b in range(n_bins) for contig in bins[b]}
 
     remove_by_bin = {}
 
@@ -78,12 +78,12 @@ def graphbin_main(
             neighbours_binned = False
 
             for neighbour in closest_neighbours:
-                for k in range(n_bins):
-                    if neighbour in bins[k]:
-                        neighbours_binned = True
-                        if k != my_bin:
-                            neighbours_have_same_label = False
-                            break
+                k = contig_bin_map.get(neighbour, -1)
+                if k != -1:
+                    neighbours_binned = True
+                    if k != my_bin:
+                        neighbours_have_same_label = False
+                        break
 
             if not neighbours_have_same_label:
                 if my_bin in remove_by_bin:
@@ -99,15 +99,12 @@ def graphbin_main(
                 neighbours_have_same_label_list.append(i)
 
     for i in remove_labels:
-        for n in range(n_bins):
-            if i in bins[n]:
-                bins[n].remove(i)
+        n = contig_bin_map.pop(i, None)
+        if n is not None:
+            bins[n].discard(i)
 
     # Further remove labels of ambiguous vertices
-    binned_contigs = []
-
-    for n in range(n_bins):
-        binned_contigs = sorted(binned_contigs + bins[n])
+    binned_contigs = set().union(*bins)
 
     for b in range(n_bins):
         for i in bins[b]:
@@ -124,11 +121,10 @@ def graphbin_main(
                     neighbours_have_same_label = True
 
                     for neighbour in closest_neighbours:
-                        for k in range(n_bins):
-                            if neighbour in bins[k]:
-                                if k != my_bin:
-                                    neighbours_have_same_label = False
-                                    break
+                        k = contig_bin_map.get(neighbour, -1)
+                        if k != -1 and k != my_bin:
+                            neighbours_have_same_label = False
+                            break
 
                     if not neighbours_have_same_label and i not in remove_labels:
                         if my_bin in remove_by_bin:
@@ -147,9 +143,9 @@ def graphbin_main(
 
     # Remove labels of ambiguous vertices
     for i in remove_labels:
-        for n in range(n_bins):
-            if i in bins[n]:
-                bins[n].remove(i)
+        n = contig_bin_map.pop(i, None)
+        if n is not None:
+            bins[n].discard(i)
 
     logger.info("Obtaining the refined binning result")
 
@@ -160,41 +156,11 @@ def graphbin_main(
         "Deteremining vertices which are not isolated and not in components without any labels"
     )
 
-    non_isolated = []
+    non_isolated = set()
 
-    for i in range(node_count):
-        if i not in non_isolated and i in binned_contigs:
-            component = []
-            component.append(i)
-            length = len(component)
-            neighbours = assembly_graph.neighbors(i, mode="all")
-
-            for neighbor in neighbours:
-                if neighbor not in component:
-                    component.append(neighbor)
-
-            component = list(set(component))
-
-            while length != len(component):
-                length = len(component)
-
-                for j in component:
-                    neighbours = assembly_graph.neighbors(j, mode="all")
-
-                    for neighbor in neighbours:
-                        if neighbor not in component:
-                            component.append(neighbor)
-
-            labelled = False
-            for j in component:
-                if j in binned_contigs:
-                    labelled = True
-                    break
-
-            if labelled:
-                for j in component:
-                    if j not in non_isolated:
-                        non_isolated.append(j)
+    for component in assembly_graph.clusters():
+        if any(v in binned_contigs for v in component):
+            non_isolated.update(component)
 
     logger.info("Number of non-isolated contigs: " + str(len(non_isolated)))
 
@@ -210,14 +176,10 @@ def graphbin_main(
             line = []
             line.append(contig)
 
-            assigned = False
-
-            for i in range(n_bins):
-                if contig in bins[i]:
-                    line.append(i + 1)
-                    assigned = True
-
-            if not assigned:
+            b = contig_bin_map.get(contig, -1)
+            if b != -1:
+                line.append(b + 1)
+            else:
                 line.append(0)
 
             neighbours = assembly_graph.neighbors(contig, mode="all")
@@ -268,9 +230,10 @@ def graphbin_main(
     logger.info("Obtaining Label Propagation result")
 
     for l in ans:
-        for i in range(n_bins):
-            if l[1] == i + 1 and l[0] not in bins[i]:
-                bins[i].append(l[0])
+        b = l[1] - 1
+        if 0 <= b < n_bins and l[0] not in bins[b]:
+            bins[b].add(l[0])
+            contig_bin_map[l[0]] = b
 
     # Remove labels of ambiguous vertices
     # -------------------------------------
@@ -291,11 +254,10 @@ def graphbin_main(
             neighbours_have_same_label = True
 
             for neighbour in closest_neighbours:
-                for k in range(n_bins):
-                    if neighbour in bins[k]:
-                        if k != my_bin:
-                            neighbours_have_same_label = False
-                            break
+                k = contig_bin_map.get(neighbour, -1)
+                if k != -1 and k != my_bin:
+                    neighbours_have_same_label = False
+                    break
 
             if not neighbours_have_same_label:
                 if my_bin in remove_by_bin:
@@ -311,9 +273,9 @@ def graphbin_main(
 
     # Remove labels of ambiguous vertices
     for i in remove_labels:
-        for n in range(n_bins):
-            if i in bins[n]:
-                bins[n].remove(i)
+        n = contig_bin_map.pop(i, None)
+        if n is not None:
+            bins[n].discard(i)
 
     logger.info("Obtaining the Final Refined Binning result")
 

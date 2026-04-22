@@ -41,6 +41,7 @@ class ArgsObj:
         max_iteration,
         diff_threshold,
         delimiter,
+        nthreads,
     ):
         self.assembler = assembler
         self.graph = graph
@@ -52,6 +53,7 @@ class ArgsObj:
         self.max_iteration = max_iteration
         self.diff_threshold = diff_threshold
         self.delimiter = delimiter
+        self.nthreads = nthreads
 
 
 @click.command()
@@ -123,6 +125,14 @@ class ArgsObj:
     show_default=True,
     required=False,
 )
+@click.option(
+    "--nthreads",
+    help="number of threads to use for label propagation",
+    type=int,
+    default=8,
+    show_default=True,
+    required=False,
+)
 @click.version_option(__version__, "-v", "--version", is_flag=True)
 def main(
     assembler,
@@ -135,6 +145,7 @@ def main(
     max_iteration,
     diff_threshold,
     delimiter,
+    nthreads,
 ):
     """
     GraphBin: Refined Binning of Metagenomic Contigs using Assembly Graphs
@@ -206,6 +217,7 @@ def main(
         max_iteration,
         diff_threshold,
         delimiter,
+        nthreads,
     )
 
     # Run GraphBin

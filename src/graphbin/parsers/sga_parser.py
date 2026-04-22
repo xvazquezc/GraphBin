@@ -31,7 +31,7 @@ def get_initial_binning_result(
 ):
     logger.info("Obtaining the initial binning result")
 
-    bins = [[] for x in range(n_bins)]
+    bins = [set() for x in range(n_bins)]
 
     try:
         with open(contig_bins_file) as contig_bins:
@@ -44,7 +44,7 @@ def get_initial_binning_result(
                 ]
 
                 bin_num = bins_list.index(row[1])
-                bins[bin_num].append(contig_num)
+                bins[bin_num].add(contig_num)
 
     except BaseException as err:
         logger.error(f"Unexpected {err}")
