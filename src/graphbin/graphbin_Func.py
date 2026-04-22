@@ -4,6 +4,7 @@ import logging
 import sys
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 from graphbin.labelpropagation.labelprop import LabelProp
 
@@ -52,7 +53,8 @@ def getClosestLabelledVertices(graph, node, binned_contigs):
 
 
 def graphbin_main(
-    n_bins, bins, bins_list, assembly_graph, node_count, diff_threshold, max_iteration
+    n_bins, bins, bins_list, assembly_graph, node_count, diff_threshold, max_iteration,
+    nthreads=1,
 ):
     logger.info("Determining ambiguous vertices")
 
@@ -61,9 +63,9 @@ def graphbin_main(
 
     remove_by_bin = {}
 
-    remove_labels = []
+    remove_labels = set()
 
-    neighbours_have_same_label_list = []
+    neighbours_have_same_label_list = set()
 
     for b in range(n_bins):
         for i in bins[b]:
@@ -88,15 +90,15 @@ def graphbin_main(
             if not neighbours_have_same_label:
                 if my_bin in remove_by_bin:
                     if len(bins[my_bin]) - len(remove_by_bin[my_bin]) >= MIN_BIN_COUNT:
-                        remove_labels.append(i)
+                        remove_labels.add(i)
                         remove_by_bin[my_bin].append(i)
                 else:
                     if len(bins[my_bin]) >= MIN_BIN_COUNT:
-                        remove_labels.append(i)
+                        remove_labels.add(i)
                         remove_by_bin[my_bin] = [i]
 
             elif neighbours_binned:
-                neighbours_have_same_label_list.append(i)
+                neighbours_have_same_label_list.add(i)
 
     for i in remove_labels:
         n = contig_bin_map.pop(i, None)
@@ -106,38 +108,47 @@ def graphbin_main(
     # Further remove labels of ambiguous vertices
     binned_contigs = set().union(*bins)
 
-    for b in range(n_bins):
-        for i in bins[b]:
-            if i not in neighbours_have_same_label_list:
-                my_bin = b
+    # Collect vertices needing BFS (not already confirmed same-label in pass 1)
+    _pass2_tasks = [
+        (b, i)
+        for b in range(n_bins)
+        for i in bins[b]
+        if i not in neighbours_have_same_label_list
+    ]
 
-                # Get set of closest labelled vertices
-                closest_neighbours = getClosestLabelledVertices(
-                    assembly_graph, i, binned_contigs
-                )
+    def _bfs(b_i):
+        b, i = b_i
+        return b, i, getClosestLabelledVertices(assembly_graph, i, binned_contigs)
 
-                if len(closest_neighbours) > 0:
-                    # Determine whether all the closest labelled vertices have the same label as its own
-                    neighbours_have_same_label = True
+    if nthreads > 1 and _pass2_tasks:
+        with ThreadPoolExecutor(max_workers=nthreads) as _executor:
+            _pass2_results = list(_executor.map(_bfs, _pass2_tasks))
+    else:
+        _pass2_results = [_bfs(t) for t in _pass2_tasks]
 
-                    for neighbour in closest_neighbours:
-                        k = contig_bin_map.get(neighbour, -1)
-                        if k != -1 and k != my_bin:
-                            neighbours_have_same_label = False
-                            break
+    for b, i, closest_neighbours in _pass2_results:
+        if closest_neighbours:
+            my_bin = b
+            neighbours_have_same_label = True
 
-                    if not neighbours_have_same_label and i not in remove_labels:
-                        if my_bin in remove_by_bin:
-                            if (
-                                len(bins[my_bin]) - len(remove_by_bin[my_bin])
-                                >= MIN_BIN_COUNT
-                            ):
-                                remove_labels.append(i)
-                                remove_by_bin[my_bin].append(i)
-                        else:
-                            if len(bins[my_bin]) >= MIN_BIN_COUNT:
-                                remove_labels.append(i)
-                                remove_by_bin[my_bin] = [i]
+            for neighbour in closest_neighbours:
+                k = contig_bin_map.get(neighbour, -1)
+                if k != -1 and k != my_bin:
+                    neighbours_have_same_label = False
+                    break
+
+            if not neighbours_have_same_label and i not in remove_labels:
+                if my_bin in remove_by_bin:
+                    if (
+                        len(bins[my_bin]) - len(remove_by_bin[my_bin])
+                        >= MIN_BIN_COUNT
+                    ):
+                        remove_labels.add(i)
+                        remove_by_bin[my_bin].append(i)
+                else:
+                    if len(bins[my_bin]) >= MIN_BIN_COUNT:
+                        remove_labels.add(i)
+                        remove_by_bin[my_bin] = [i]
 
     logger.info("Removing labels of ambiguous vertices")
 
@@ -242,7 +253,7 @@ def graphbin_main(
 
     remove_by_bin = {}
 
-    remove_labels = []
+    remove_labels = set()
 
     for b in range(n_bins):
         for i in bins[b]:
@@ -262,11 +273,11 @@ def graphbin_main(
             if not neighbours_have_same_label:
                 if my_bin in remove_by_bin:
                     if len(bins[my_bin]) - len(remove_by_bin[my_bin]) >= MIN_BIN_COUNT:
-                        remove_labels.append(i)
+                        remove_labels.add(i)
                         remove_by_bin[my_bin].append(i)
                 else:
                     if len(bins[my_bin]) >= MIN_BIN_COUNT:
-                        remove_labels.append(i)
+                        remove_labels.add(i)
                         remove_by_bin[my_bin] = [i]
 
     logger.info("Removing labels of ambiguous vertices")

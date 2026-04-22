@@ -2,3 +2,5 @@ cogent3
 igraph>=0.7.1
 cairocffi
 click
+numpy
+scipy

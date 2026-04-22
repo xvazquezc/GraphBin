@@ -9,5 +9,7 @@ dependencies:
   - cairocffi
   - python-igraph
   - click
+  - numpy
+  - scipy
   - pip
   - cogent3

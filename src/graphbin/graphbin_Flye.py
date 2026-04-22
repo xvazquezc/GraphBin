@@ -107,6 +107,7 @@ def run(args):
         node_count,
         diff_threshold,
         max_iteration,
+        nthreads=args.nthreads,
     )
 
     elapsed_time = time.time() - start_time

@@ -6,6 +6,13 @@ This code has been modified from the source found at https://github.com/ZwEin27/
 
 import logging
 
+try:
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
 
 __author__ = "Vijini Mallawaarachchi"
 __copyright__ = "Copyright 2019-2022, GraphBin Project"
@@ -47,6 +54,13 @@ class LabelProp:
         self.vertex_size = 0
         self.label_size = 0
         self.labelled_size = 0
+        # numpy/scipy structures (populated by _setup_numpy after setup_env)
+        self._vertices = None
+        self._A = None
+        self._F = None
+        self._labelled_idx = None
+        self._unlabelled_idx = None
+        self._labels = None
 
     def setup_env(self):
         # initialize vertex_in_adj_map
@@ -101,6 +115,9 @@ class LabelProp:
                         arr.append(0.0)
             self.vertex_f_map.setdefault(v, arr)
 
+        if _NUMPY_AVAILABLE:
+            self._setup_numpy()
+
     def load_data_from_mem(self, data):
         self.initialize_env()
         self.vertex_size = len(data)
@@ -127,6 +144,80 @@ class LabelProp:
     ################################################################################
     #   Label Propagation
     ################################################################################
+
+    def _setup_numpy(self):
+        """Build scipy sparse adjacency matrix and numpy label-probability matrix."""
+        vertices = list(self.vertex_f_map.keys())
+        n = len(vertices)
+        if n == 0 or self.label_size == 0:
+            return
+        v_to_idx = {v: i for i, v in enumerate(vertices)}
+
+        # Ordered label list matching label_index_map indices
+        labels = [None] * self.label_size
+        for lbl, idx in self.label_index_map.items():
+            labels[idx] = lbl
+        self._labels = labels
+        L = self.label_size
+
+        # F matrix: shape (n, L) — current label-probability estimates
+        self._F = np.zeros((n, L), dtype=np.float64)
+        labelled_rows = []
+        unlabelled_rows = []
+        for i, v in enumerate(vertices):
+            self._F[i] = self.vertex_f_map[v]
+            if self.vertex_label_map[v] != 0:
+                labelled_rows.append(i)
+            else:
+                unlabelled_rows.append(i)
+        self._labelled_idx = np.array(labelled_rows, dtype=np.intp)
+        self._unlabelled_idx = np.array(unlabelled_rows, dtype=np.intp)
+        self._vertices = vertices
+
+        # Sparse normalised adjacency: A[v, src] = weight / deg_v
+        rows_i, cols_i, data_v = [], [], []
+        for v_i, v in enumerate(vertices):
+            deg_v = self.vertex_deg_map.get(v, 0.0)
+            if deg_v == 0.0:
+                continue
+            for edge in self.vertex_in_adj_map.get(v, []):
+                src_idx = v_to_idx.get(edge.src)
+                if src_idx is not None:
+                    rows_i.append(v_i)
+                    cols_i.append(src_idx)
+                    data_v.append(edge.weight / deg_v)
+        self._A = csr_matrix(
+            (data_v, (rows_i, cols_i)), shape=(n, n), dtype=np.float64
+        )
+
+    def _iterate_numpy(self):
+        """Single LP iteration using sparse matrix multiplication."""
+        F_new = self._A.dot(self._F)
+        # Restore labelled vertices to their fixed one-hot probabilities
+        if self._labelled_idx.size > 0:
+            F_new[self._labelled_idx] = self._F[self._labelled_idx]
+        # Convergence diff over unlabelled vertices only
+        diff = (
+            float(np.abs(F_new[self._unlabelled_idx] - self._F[self._unlabelled_idx]).sum())
+            if self._unlabelled_idx.size > 0
+            else 0.0
+        )
+        self._F = F_new
+        return diff
+
+    def _debug_numpy(self):
+        """Extract LP results from the numpy F matrix (same format as debug())."""
+        if self._F is None or self.label_size == 0:
+            return []
+        labels = self._labels
+        best_idx = np.argmax(self._F, axis=1)
+        ans = []
+        for i, v in enumerate(self._vertices):
+            im_ans = [v, labels[int(best_idx[i])]]
+            for j, lbl in enumerate(labels):
+                im_ans.append([lbl, float(self._F[i, j])])
+            ans.append(im_ans)
+        return ans
 
     def debug(self):
         labels = []
@@ -190,16 +281,17 @@ class LabelProp:
 
     def run(self, eps, max_iter, show_log=False, clean_result=False):
         diff = 0.0
+        use_numpy = self._A is not None
         for i in range(max_iter):
             logger.debug("Iteration " + str(i + 1))
-            diff = self.iterate()
+            diff = self._iterate_numpy() if use_numpy else self.iterate()
             if diff < eps:
                 break
 
         if show_log:
             self.show_detail(diff, eps, i, max_iter)
 
-        ans = self.debug()
+        ans = self._debug_numpy() if use_numpy else self.debug()
 
         if clean_result:
             rtn_cleaned = []
