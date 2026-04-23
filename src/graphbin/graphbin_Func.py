@@ -68,7 +68,7 @@ def graphbin_main(
     neighbours_have_same_label_list = set()
 
     for b in range(n_bins):
-        for i in bins[b]:
+        for i in sorted(bins[b]):
             my_bin = b
 
             # Get set of closest labelled vertices with distance = 1
@@ -112,7 +112,7 @@ def graphbin_main(
     _pass2_tasks = [
         (b, i)
         for b in range(n_bins)
-        for i in bins[b]
+        for i in sorted(bins[b])
         if i not in neighbours_have_same_label_list
     ]
 
@@ -256,7 +256,7 @@ def graphbin_main(
     remove_labels = set()
 
     for b in range(n_bins):
-        for i in bins[b]:
+        for i in sorted(bins[b]):
             my_bin = b
 
             closest_neighbours = assembly_graph.neighbors(i, mode="all")
